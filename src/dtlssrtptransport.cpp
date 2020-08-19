@@ -52,7 +52,7 @@ DtlsSrtpTransport::DtlsSrtpTransport(std::shared_ptr<IceTransport> lower,
 #else
 	PLOG_DEBUG << "Setting SRTP profile (OpenSSL)";
 	// returns 0 on success, 1 on error
-	if (SSL_set_tlsext_use_srtp(mSsl, "SRTP_AES128_CM_SHA1_80"), "Failed to set SRTP profile")
+	if (SSL_set_tlsext_use_srtp(mSsl, "SRTP_AES128_CM_SHA1_80"))
 		throw std::runtime_error("Failed to set SRTP profile: " +
 		                         openssl::error_string(ERR_get_error()));
 #endif
@@ -170,6 +170,8 @@ void DtlsSrtpTransport::incoming(message_ptr message) {
 			if (srtp_err_status_t err = srtp_unprotect_rtcp(mSrtpIn, message->data(), &size)) {
 				if (err == srtp_err_status_replay_fail)
 					PLOG_WARNING << "Incoming SRTCP packet is a replay";
+				else if (err == srtp_err_status_auth_fail)
+					PLOG_WARNING << "Incoming SRTCP packet failed authentication check";
 				else
 					PLOG_WARNING << "SRTCP unprotect error, status=" << err;
 				return;
@@ -181,6 +183,8 @@ void DtlsSrtpTransport::incoming(message_ptr message) {
 			if (srtp_err_status_t err = srtp_unprotect(mSrtpIn, message->data(), &size)) {
 				if (err == srtp_err_status_replay_fail)
 					PLOG_WARNING << "Incoming SRTP packet is a replay";
+				else if (err == srtp_err_status_auth_fail)
+					PLOG_WARNING << "Incoming SRTP packet failed authentication check";
 				else
 					PLOG_WARNING << "SRTP unprotect error, status=" << err;
 				return;
@@ -242,11 +246,11 @@ void DtlsSrtpTransport::postHandshake() {
 		throw std::runtime_error("Failed to derive SRTP keys: " +
 		                         openssl::error_string(ERR_get_error()));
 
+	// Order is client key, server key, client salt, and server salt
 	clientKey = material;
-	clientSalt = clientKey + SRTP_AES_128_KEY_LEN;
-
-	serverKey = material + SRTP_AES_ICM_128_KEY_LEN_WSALT;
-	serverSalt = serverKey + SRTP_AES_128_KEY_LEN;
+	serverKey = clientKey + SRTP_AES_128_KEY_LEN;
+	clientSalt = serverKey + SRTP_AES_128_KEY_LEN;
+	serverSalt = clientSalt + SRTP_SALT_LEN;
 #endif
 
 	unsigned char clientSessionKey[SRTP_AES_ICM_128_KEY_LEN_WSALT];
